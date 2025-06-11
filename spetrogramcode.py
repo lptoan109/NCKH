@@ -5,8 +5,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 # Thư mục chứa các file .wav
-input_dir = r'e:\NCKH\Dữ liệu ICBHI 2017 đã lọc\COPD(viêm phổi mãn tính)\Dữ liệu WAV'         # Thay bằng đường dẫn tới thư mục chứa .wav
-output_dir = r'e:\NCKH\Output\COPD(viêm phổi mãn tính)'  # Thư mục để lưu ảnh spectrogram
+input_dir = r'E:\NCKH\Dữ liệu ICBHI 2017 đã lọc\Healthy(bthg)\Dữ liệu WAV'         # Thay bằng đường dẫn tới thư mục chứa .wav
+output_dir = r'E:\NCKH\Output\Healthy(bthg)'  # Thư mục để lưu ảnh spectrogram
 
 # Lặp qua tất cả các file trong thư mục
 for filename in os.listdir(input_dir):
