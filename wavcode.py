@@ -6,9 +6,6 @@ input_folder = r"c:\NCKH\Dữ liệu Coughvid đã lọc\upper_infection"
 # ✅ Đường dẫn đến thư mục bạn muốn lưu file .wav đầu ra
 output_folder = r"c:\NCKH\Dữ liệu Coughvid đã lọc\upper_infection\Dữ liệu WAV"
 
-# Tạo thư mục output nếu chưa có
-os.makedirs(output_folder, exist_ok=True)
-
 # Duyệt tất cả file trong thư mục đầu vào
 for filename in os.listdir(input_folder):
     if filename.lower().endswith(".webm"):
