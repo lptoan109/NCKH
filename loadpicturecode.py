@@ -8,7 +8,7 @@ datagen = ImageDataGenerator(
 
 # 👉 Bộ ảnh huấn luyện
 train_generator = datagen.flow_from_directory(
-    'dataset',               # Thư mục gốc chứa các thư mục con
+    r'D:\Dữ liệu về tiếng ho NCKH\COUGHVID Dataset\coughvid_dataset',               # Thư mục gốc chứa các thư mục con
     target_size=(100, 40),   # Resize ảnh về đúng kích thước input của CNN
     color_mode='grayscale',  # Vì ảnh spectrogram là ảnh xám
     class_mode='categorical',# Trả về nhãn dạng one-hot (phù hợp với softmax)
@@ -19,7 +19,7 @@ train_generator = datagen.flow_from_directory(
 
 # 👉 Bộ ảnh kiểm tra (validation)
 val_generator = datagen.flow_from_directory(
-    'dataset',
+    r'D:\Dữ liệu về tiếng ho NCKH\COUGHVID Dataset\coughvid_validationset',
     target_size=(100, 40),
     color_mode='grayscale',
     class_mode='categorical',
@@ -27,3 +27,6 @@ val_generator = datagen.flow_from_directory(
     shuffle=True,
     subset='validation'      # Lấy tập kiểm tra
 )
+print("Train classes:", train_generator.class_indices)
+print("Number of training samples:", train_generator.samples)
+print("Number of validation samples:", val_generator.samples)
