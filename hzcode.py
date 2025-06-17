@@ -5,8 +5,6 @@ INPUT_DIR="./input_wavs"
 # Thư mục lưu file đã chuyển đổi
 OUTPUT_DIR="./output_wavs"
 
-# Tạo thư mục đầu ra nếu chưa có
-mkdir -p "$OUTPUT_DIR"
 
 # Lặp qua tất cả các file .wav trong thư mục
 for file in "$INPUT_DIR"/*.wav; do
