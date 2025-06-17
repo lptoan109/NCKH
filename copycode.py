@@ -12,9 +12,6 @@ source_folder = r"D:\Dữ liệu về tiếng ho NCKH\COUGHVID Dataset\coughvid_
 destination_folder = r"D:\Dữ liệu về tiếng ho NCKH\COUGHVID Dataset\Dữ liệu Coughvid đã lọc\lower_infection1"
 output_excel_path = excel_path  # 📌 Ghi đè file gốc
 
-# ✅ Tạo thư mục đích nếu chưa có
-os.makedirs(destination_folder, exist_ok=True)
-
 # ✅ Mở file Excel
 wb = openpyxl.load_workbook(excel_path)
 ws = wb[sheet_name]
