@@ -6,7 +6,7 @@ datagen = ImageDataGenerator(
     validation_split=0.2     # Giữ lại 20% ảnh để làm validation
 )
 
-# 👉 Bộ ảnh huấn luyện
+# Bộ ảnh huấn luyện
 train_generator = datagen.flow_from_directory(
     r'D:\Dữ liệu về tiếng ho NCKH\COUGHVID Dataset\coughvid_dataset',               # Thư mục gốc chứa các thư mục con
     target_size=(100, 40),   # Resize ảnh về đúng kích thước input của CNN
@@ -17,9 +17,9 @@ train_generator = datagen.flow_from_directory(
     subset='training'        # Lấy tập huấn luyện
 )
 
-# 👉 Bộ ảnh kiểm tra (validation)
+#Bộ ảnh kiểm tra (validation)
 val_generator = datagen.flow_from_directory(
-    r'D:\Dữ liệu về tiếng ho NCKH\COUGHVID Dataset\coughvid_validationset',
+    r'D:\Dữ liệu về tiếng ho NCKH\COUGHVID Dataset\coughvid_dataset',
     target_size=(100, 40),
     color_mode='grayscale',
     class_mode='categorical',
@@ -30,3 +30,7 @@ val_generator = datagen.flow_from_directory(
 print("Train classes:", train_generator.class_indices)
 print("Number of training samples:", train_generator.samples)
 print("Number of validation samples:", val_generator.samples)
+
+
+
+
