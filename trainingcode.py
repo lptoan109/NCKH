@@ -32,3 +32,5 @@ history = model.fit(
     epochs=20,                    # Số vòng lặp (lần quét toàn bộ dữ liệu)
     verbose=1                     # Hiện tiến trình huấn luyện
 )
+#model.save("cough_classifier_model.h5")
+
