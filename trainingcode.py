@@ -6,7 +6,7 @@ warnings.filterwarnings("ignore")         # Ẩn warning
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense
 from pr_procescode import val_generator, train_generator
-import os
+import matplotlib.pyplot as plt
 
 
 #Tiền xử lý các ảnh
@@ -20,17 +20,33 @@ model = Sequential([
     Dense(5, activation='softmax')  #Phân 5 lớp bệnh thành dạng xác xuất sao cho tổng bằng 1
 ])
 
+#Khởi tạo học
 model.compile(
     optimizer='adam', #Tối ưu hóa mô hình bằng cách cập nhật đặc trọng số sau mỗi lần học
     loss='categorical_crossentropy', #Lấy thông số sai lệch sau mỗi lần học
     metrics=['accuracy'] #Lấy chỉ số độ chính xác
 )
 
+#Lấy dữ liệu và in kết quả
 history = model.fit(
     train_generator,              # Lấy dữ liệu huấn luyện
     validation_data=val_generator, # Lấy dữ liệu kiểm tra (validation)
     epochs=20,                    # Số vòng lặp (lần quét toàn bộ dữ liệu)
     verbose=1                     # Hiện tiến trình huấn luyện
 )
+
+# Vẽ sơ đồ Accuracy
+#plt.plot(history.history['accuracy'], label='Train Acc')
+#plt.plot(history.history['val_accuracy'], label='Val Acc')
+#plt.title('Accuracy')
+#plt.legend()
+#plt.show()
+# Vẽ sơ đồ Loss
+#plt.plot(history.history['loss'], label='Train Loss')
+#plt.plot(history.history['val_loss'], label='Val Loss')
+#plt.title('Loss')
+#plt.legend()
+#plt.show()
+
 #model.save("cough_classifier_model.h5")
 
