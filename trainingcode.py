@@ -7,6 +7,8 @@ from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense
 from pr_procescode import val_generator, train_generator
 import matplotlib.pyplot as plt
+from tensorflow.keras.callbacks import EarlyStopping
+
 
 
 #Tiền xử lý các ảnh
@@ -27,12 +29,14 @@ model.compile(
     metrics=['accuracy'] #Lấy chỉ số độ chính xác
 )
 
+earlystop = EarlyStopping(monitor='val_accuracy', patience=5, restore_best_weights=True) #Tự động dừng khi các chỉ số không tăng
 #Lấy dữ liệu và in kết quả
 history = model.fit(
     train_generator,              # Lấy dữ liệu huấn luyện
     validation_data=val_generator, # Lấy dữ liệu kiểm tra (validation)
     epochs=20,                    # Số vòng lặp (lần quét toàn bộ dữ liệu)
     verbose=1                     # Hiện tiến trình huấn luyện
+    callbacks=[checkpoint, earlystop]
 )
 
 # Vẽ sơ đồ Accuracy
