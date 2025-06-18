@@ -1,4 +1,6 @@
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense
 
 # Khởi tạo bộ tiền xử lý ảnh: chuẩn hóa và tách tập
 datagen = ImageDataGenerator(
@@ -27,9 +29,7 @@ val_generator = datagen.flow_from_directory(
     shuffle=True,
     subset='validation'      # Lấy tập kiểm tra
 )
-print("Train classes:", train_generator.class_indices)
-print("Number of training samples:", train_generator.samples)
-print("Number of validation samples:", val_generator.samples)
+
 
 
 
