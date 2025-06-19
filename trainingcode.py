@@ -8,7 +8,7 @@ from tensorflow.keras.mixed_precision import set_global_policy
 set_global_policy('mixed_float16')
 from tensorflow.keras.regularizers import l2
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout, BatchNormalization
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout, BatchNormalization, GlobalAveragePooling2D
 from pr_procescode import val_generator, train_generator
 import matplotlib.pyplot as plt
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
@@ -34,7 +34,7 @@ model = Sequential([
     Conv2D(256, (3, 3), activation='relu',kernel_regularizer=l2(0.001)),   # Cắt ảnh ra 256 filter 
     BatchNormalization(),
 
-    Flatten(),#Chuyển xuống dạng 1D
+    GlobalAveragePooling2D(),#Chuyển xuống dạng 1D
     Dense(256, activation='relu'),#Tạo ra 256 neuron để học 
     Dropout(0.3),#Tự động tắt 30% neuron để thử thách
     Dense(5, activation='softmax', dtype='float32')  #Phân 5 lớp bệnh thành dạng xác xuất sao cho tổng bằng 1 (mixed precision yêu cầu float32 đầu ra)
