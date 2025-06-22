@@ -1,52 +1,53 @@
-# ==== CÀI ĐẶT THƯ VIỆN ==== 
+# ====== CÀI ĐẶT THƯ VIỆN ======
 !pip install tensorflow pandas matplotlib openpyxl tqdm
 
-# ==== KẾT NỐI GOOGLE DRIVE ==== 
-from google.colab import drive
-drive.mount('/content/drive')
+# ====== KẾT NỐI GOOGLE DRIVE ======
+from google.colab import drive                   # Import thư viện Google Drive
+drive.mount('/content/drive')                    # Mount Google Drive vào Colab
 
-# ==== THƯ VIỆN ==== 
-import os, random, shutil                             # Thao tác file, thư mục
-import tensorflow as tf                               # Deep learning
-from tensorflow.keras import layers, models           # Xây dựng model Keras
+# ====== THƯ VIỆN ======
+import os, random, shutil                         # Thư viện thao tác file, thư mục, copy, shuffle
+import tensorflow as tf                           # Thư viện deep learning
+from tensorflow.keras import layers, models       # Thư viện xây dựng model Keras
 from tensorflow.keras.applications import EfficientNetB0  # EfficientNetB0 pretrained từ ImageNet
-import matplotlib.pyplot as plt                       # Vẽ biểu đồ
-import pandas as pd                                   # Xử lý dữ liệu dạng bảng
-from datetime import datetime                         # Tạo timestamp cho tên file
-from tensorflow.keras.callbacks import TensorBoard    # Callback TensorBoard
-%load_ext tensorboard
+import matplotlib.pyplot as plt                   # Thư viện vẽ biểu đồ
+import pandas as pd                               # Thư viện xử lý dữ liệu dạng bảng
+from datetime import datetime                     # Thư viện tạo timestamp cho tên file
+from sklearn.utils.class_weight import compute_class_weight  # Tính toán class_weight
+from tensorflow.keras.callbacks import TensorBoard, EarlyStopping  # Callback TensorBoard và EarlyStopping
+%load_ext tensorboard                             # Kích hoạt TensorBoard trong Colab
 
-# ==== CẤU HÌNH ==== 
-ORIGINAL_DIR = '/content/drive/MyDrive/DATASET_FULL'          # Dataset gốc (theo từng class con)
-OUTPUT_SPLIT_DIR = '/content/drive/MyDrive/DATASET_SPLIT'     # Dataset sau khi chia train/val/test
+# ====== CẤU HÌNH ======
+ORIGINAL_DIR = '/content/drive/MyDrive/DATASET_FULL'          # Thư mục chứa dataset gốc
+OUTPUT_SPLIT_DIR = '/content/drive/MyDrive/DATASET_SPLIT'     # Thư mục lưu dataset sau khi chia
 RESULT_DIR = '/content/drive/MyDrive/RESULT'                  # Thư mục lưu model, log, biểu đồ
-TENSORBOARD_LOG_DIR = '/content/drive/MyDrive/RESULT/tensorboard_logs'  # Log TensorBoard
+TENSORBOARD_LOG_DIR = '/content/drive/MyDrive/RESULT/tensorboard_logs'  # Thư mục log TensorBoard
 
-IMG_SIZE = (128, 128)                                          # Resize ảnh đầu vào
-BATCH_SIZE = 32                                                # Số ảnh mỗi batch
-EPOCHS = 30                                                    # Epoch huấn luyện lần đầu
-MODEL_NAME = "efficientnet_cough_model"                        # Tên model
-train_ratio, val_ratio, test_ratio = 0.7, 0.2, 0.1             # Tỉ lệ chia tập train/val/test
+IMG_SIZE = (128, 128)                      # Kích thước ảnh input model
+BATCH_SIZE = 32                            # Số lượng ảnh mỗi batch
+EPOCHS = 30                                # Số epoch huấn luyện lần đầu
+MODEL_NAME = "efficientnet_cough_model"    # Tên model lưu
+train_ratio, val_ratio, test_ratio = 0.7, 0.2, 0.1  # Tỉ lệ chia tập train/val/test
 
-# ==== HÀM CHIA DATASET ==== 
+# ====== HÀM CHIA DATASET ======
 def split_dataset(original_dir, output_dir, train_ratio, val_ratio, test_ratio):
-    for cls in os.listdir(original_dir):
+    for cls in os.listdir(original_dir):                                 # Duyệt qua từng class
         cls_path = os.path.join(original_dir, cls)
-        if not os.path.isdir(cls_path): continue
+        if not os.path.isdir(cls_path): continue                        # Bỏ qua nếu không phải thư mục
         images = [f for f in os.listdir(cls_path) if os.path.isfile(os.path.join(cls_path, f))]
-        random.shuffle(images)
+        random.shuffle(images)                                          # Trộn ngẫu nhiên ảnh
         total = len(images)
-        train_end = int(total * train_ratio)
-        val_end = train_end + int(total * val_ratio)
+        train_end = int(total * train_ratio)                            # Xác định số lượng ảnh train
+        val_end = train_end + int(total * val_ratio)                   # Xác định số lượng ảnh val
         for split, start, end in [('train', 0, train_end), ('val', train_end, val_end), ('test', val_end, total)]:
             split_cls_dir = os.path.join(output_dir, split, cls)
-            os.makedirs(split_cls_dir, exist_ok=True)
+            os.makedirs(split_cls_dir, exist_ok=True)                  # Tạo thư mục mới nếu chưa có
             for img in images[start:end]:
-                shutil.copy2(os.path.join(cls_path, img), os.path.join(split_cls_dir, img))
+                shutil.copy2(os.path.join(cls_path, img), os.path.join(split_cls_dir, img))  # Copy ảnh vào thư mục
 
 split_dataset(ORIGINAL_DIR, OUTPUT_SPLIT_DIR, train_ratio, val_ratio, test_ratio)
 
-# ==== TẢI DỮ LIỆU ==== 
+# ====== TẢI DỮ LIỆU ======
 train_ds = tf.keras.preprocessing.image_dataset_from_directory(
     os.path.join(OUTPUT_SPLIT_DIR, "train"), image_size=IMG_SIZE, batch_size=BATCH_SIZE
 )
@@ -57,63 +58,72 @@ test_ds = tf.keras.preprocessing.image_dataset_from_directory(
     os.path.join(OUTPUT_SPLIT_DIR, "test"), image_size=IMG_SIZE, batch_size=BATCH_SIZE
 )
 
-class_names = train_ds.class_names
-num_classes = len(class_names)
+class_names = train_ds.class_names                         # Lấy danh sách các lớp
+num_classes = len(class_names)                            # Số lượng lớp
 print("Các lớp:", class_names)
 
 AUTOTUNE = tf.data.AUTOTUNE
-train_ds = train_ds.prefetch(AUTOTUNE)
+train_ds = train_ds.prefetch(AUTOTUNE)                    # Prefetch để tăng tốc training
 val_ds = val_ds.prefetch(AUTOTUNE)
 test_ds = test_ds.prefetch(AUTOTUNE)
 
-# ==== XÂY DỰNG MÔ HÌNH EfficientNetB0 ==== 
+# ====== TÍNH TOÁN CLASS WEIGHT ======
+labels = []
+for _, y in train_ds.unbatch():                           # Duyệt qua dataset unbatch để lấy toàn bộ label
+    labels.append(int(y.numpy()))
+
+class_weights = compute_class_weight(
+    class_weight="balanced", classes=np.arange(num_classes), y=labels
+)
+class_weight_dict = {i: w for i, w in enumerate(class_weights)}
+print("Class weights:", class_weight_dict)
+
+# ====== XÂY DỰNG MÔ HÌNH EfficientNetB0 ======
 base_model = EfficientNetB0(include_top=False, weights='imagenet', input_shape=(128, 128, 3))
-base_model.trainable = False
+base_model.trainable = False                                # Freeze EfficientNet gốc
 
 model = models.Sequential([
-    layers.Rescaling(1./255),
-    base_model,
-    layers.GlobalAveragePooling2D(),
-    layers.Dropout(0.2),
-    layers.Dense(num_classes, activation='softmax')
+    layers.Rescaling(1./255),                              # Normalize ảnh về [0,1]
+    base_model,                                            # EfficientNet pretrained
+    layers.GlobalAveragePooling2D(),                       # Giảm chiều feature map
+    layers.Dropout(0.2),                                   # Dropout để tránh overfitting
+    layers.Dense(num_classes, activation='softmax')        # Dense cuối cùng phân loại
 ])
 
 model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
 
-# ==== CALLBACK TENSORBOARD ==== 
+# ====== CALLBACK ======
 tensorboard_callback = TensorBoard(
     log_dir=os.path.join(TENSORBOARD_LOG_DIR, datetime.now().strftime("%Y%m%d-%H%M%S")),
     histogram_freq=1
 )
+earlystopping_callback = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
 
-# ==== HUẤN LUYỆN LẦN 1 ==== 
+# ====== HUẤN LUYỆN LẦN 1 ======
 history = model.fit(
-    train_ds,
-    validation_data=val_ds,
-    epochs=EPOCHS,
-    callbacks=[tensorboard_callback]
+    train_ds, validation_data=val_ds, epochs=EPOCHS, callbacks=[tensorboard_callback, earlystopping_callback],
+    class_weight=class_weight_dict
 )
 
-# ==== FINE-TUNE EfficientNet ==== 
-base_model.trainable = True
-for layer in base_model.layers[:-20]:
+# ====== FINE-TUNE EfficientNet ======
+base_model.trainable = True                                   # Mở khóa toàn bộ EfficientNet
+for layer in base_model.layers[:-20]:                         # Đóng băng các layer ngoài 20 layer cuối cùng
     layer.trainable = False
 
 model.compile(optimizer=tf.keras.optimizers.Adam(1e-5), loss='sparse_categorical_crossentropy', metrics=['accuracy'])
 
 history_fine = model.fit(
-    train_ds,
-    validation_data=val_ds,
-    epochs=10,
-    callbacks=[tensorboard_callback]
+    train_ds, validation_data=val_ds, epochs=10, callbacks=[tensorboard_callback, earlystopping_callback],
+    class_weight=class_weight_dict
 )
 
-# ==== GHI LOG QUÁ TRÌNH HUẤN LUYỆN ==== 
+# ====== GHI LOG VÀ VẼ BIỂU ĐỒ ======
 def save_training_log(history, history_fine=None, output_folder=RESULT_DIR, prefix=MODEL_NAME):
     history_data = history.history
     if history_fine:
         for key in history_fine.history:
             history_data[key].extend(history_fine.history[key])
+
     df = pd.DataFrame({
         'Epoch': list(range(1, len(history_data['accuracy']) + 1)),
         'Accuracy': history_data['accuracy'],
@@ -121,31 +131,33 @@ def save_training_log(history, history_fine=None, output_folder=RESULT_DIR, pref
         'Val Accuracy': history_data['val_accuracy'],
         'Val Loss': history_data['val_loss']
     })
+
     os.makedirs(output_folder, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     excel_path = os.path.join(output_folder, f"{prefix}_trainlog_{timestamp}.xlsx")
     acc_plot = os.path.join(output_folder, f"{prefix}_accuracy_{timestamp}.png")
     loss_plot = os.path.join(output_folder, f"{prefix}_loss_{timestamp}.png")
+
     df.to_excel(excel_path, index=False)
 
-    plt.figure(figsize=(8,5))
+    plt.figure(figsize=(8, 5))
     plt.plot(df['Epoch'], df['Accuracy'], label='Train Acc')
     plt.plot(df['Epoch'], df['Val Accuracy'], label='Val Acc')
-    plt.title('Accuracy theo Epoch')
     plt.xlabel('Epoch')
     plt.ylabel('Accuracy')
+    plt.title('Accuracy theo Epoch')
     plt.legend()
     plt.grid()
     plt.tight_layout()
     plt.savefig(acc_plot)
     plt.close()
 
-    plt.figure(figsize=(8,5))
+    plt.figure(figsize=(8, 5))
     plt.plot(df['Epoch'], df['Loss'], label='Train Loss')
     plt.plot(df['Epoch'], df['Val Loss'], label='Val Loss')
-    plt.title('Loss theo Epoch')
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
+    plt.title('Loss theo Epoch')
     plt.legend()
     plt.grid()
     plt.tight_layout()
@@ -154,10 +166,10 @@ def save_training_log(history, history_fine=None, output_folder=RESULT_DIR, pref
 
 save_training_log(history, history_fine)
 
-# ==== LƯU MÔ HÌNH CUỐI CÙNG ==== 
+# ====== LƯU MÔ HÌNH CUỐI CÙNG ======
 MODEL_FILE = os.path.join(RESULT_DIR, f"{MODEL_NAME}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.keras")
 model.save(MODEL_FILE)
 print("Đã lưu mô hình:", MODEL_FILE)
 
-# ==== CHẠY TENSORBOARD ==== 
+# ====== CHẠY TENSORBOARD ======
 %tensorboard --logdir $TENSORBOARD_LOG_DIR

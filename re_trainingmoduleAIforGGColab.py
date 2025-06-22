@@ -1,5 +1,5 @@
 # ====== CÀI ĐẶT THƯ VIỆN ======
-!pip install tensorflow pandas matplotlib
+!pip install tensorflow pandas matplotlib openpyxl
 
 # ====== THƯ VIỆN ======
 import tensorflow as tf                                # Thư viện chính để xây dựng và huấn luyện mô hình deep learning
@@ -7,8 +7,12 @@ from tensorflow.keras import layers, models            # Để tạo các layer 
 from tensorflow.keras.applications import EfficientNetB0  # Import EfficientNetB0 pretrained
 import matplotlib.pyplot as plt                        # Thư viện để vẽ biểu đồ
 import pandas as pd                                    # Thư viện xử lý dữ liệu dạng bảng
+import numpy as np                                     # Thư viện xử lý mảng số
 import os                                              # Làm việc với hệ thống file
 from datetime import datetime                          # Để tạo tên file có timestamp
+from collections import Counter                        # Đếm số lượng mẫu trong từng lớp để tính class_weights
+from tensorflow.keras.callbacks import EarlyStopping   # Callback để dừng sớm khi không cải thiện
+from tensorflow.keras.callbacks import TensorBoard     # Callback TensorBoard để theo dõi quá trình huấn luyện
 
 # ====== KẾT NỐI GOOGLE DRIVE ======
 from google.colab import drive
@@ -37,9 +41,19 @@ val_ds = tf.keras.preprocessing.image_dataset_from_directory(
     batch_size=BATCH_SIZE
 )
 
-# Lấy tên class
+# Lấy tên class và số lượng class
 class_names = train_ds.class_names
 num_classes = len(class_names)
+
+# ====== TÍNH CLASS WEIGHTS ======
+# Đếm số lượng ảnh mỗi lớp trong tập huấn luyện
+all_labels = np.concatenate([labels.numpy() for _, labels in train_ds])
+label_counts = Counter(all_labels)
+total_samples = sum(label_counts.values())
+
+# Tính class_weight: trọng số nghịch đảo với tần suất xuất hiện để cân bằng dataset
+class_weights = {i: total_samples / (num_classes * count) for i, count in label_counts.items()}
+print("Class Weights:", class_weights)
 
 # ====== PREFETCH GIÚP TĂNG HIỆU NĂNG ======
 AUTOTUNE = tf.data.AUTOTUNE
@@ -58,10 +72,15 @@ FINE_TUNE_AT = int(len(base_model.layers) * 0.7)
 for layer in base_model.layers[:FINE_TUNE_AT]:
     layer.trainable = False
 
-# ====== CALLBACK TENSORBOARD ======
-# Tạo thư mục lưu log TensorBoard
+# ====== CALLBACK TENSORBOARD & EARLY STOPPING ======
 log_dir = os.path.join(TENSORBOARD_LOG_DIR, datetime.now().strftime("%Y%m%d-%H%M%S"))
-tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)
+tensorboard_callback = TensorBoard(log_dir=log_dir, histogram_freq=1)
+
+early_stopping_callback = EarlyStopping(
+    monitor='val_loss',         # Theo dõi loss trên tập validation
+    patience=5,                 # Nếu 5 epoch liên tiếp không giảm loss → dừng
+    restore_best_weights=True   # Khôi phục trọng số tốt nhất
+)
 
 # ====== COMPILE LẠI MÔ HÌNH ======
 model.compile(
@@ -70,17 +89,14 @@ model.compile(
     metrics=['accuracy']                            # Đánh giá bằng độ chính xác
 )
 
-# ====== FINE-TUNE VỚI TENSORBOARD ======
+# ====== FINE-TUNE VỚI CLASS WEIGHTS + EARLY STOPPING + TENSORBOARD ======
 history_finetune = model.fit(
     train_ds,                                       # Tập huấn luyện (gốc + pseudo)
     validation_data=val_ds,                         # Tập kiểm tra
     epochs=EPOCHS,                                  # Số epoch fine-tune
-    callbacks=[tensorboard_callback]                # Ghi log vào TensorBoard
+    callbacks=[tensorboard_callback, early_stopping_callback],  # Ghi log TensorBoard + Dừng sớm
+    class_weight=class_weights                      # Thêm trọng số class vào quá trình huấn luyện
 )
-
-# ====== MỞ TENSORBOARD TRÊN COLAB ======
-%load_ext tensorboard
-%tensorboard --logdir $TENSORBOARD_LOG_DIR
 
 # ====== LƯU LOG RA EXCEL + VẼ BIỂU ĐỒ ======
 def save_training_log(history, output_folder=OUTPUT_FOLDER, prefix=MODEL_NAME):
@@ -132,3 +148,7 @@ save_training_log(history_finetune)
 # ====== LƯU MÔ HÌNH SAU FINE-TUNE ======
 model_path = os.path.join(OUTPUT_FOLDER, f"{MODEL_NAME}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.keras")
 model.save(model_path)
+
+# ====== MỞ TENSORBOARD TRÊN COLAB ======
+%load_ext tensorboard
+%tensorboard --logdir $TENSORBOARD_LOG_DIR
