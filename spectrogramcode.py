@@ -1,51 +1,46 @@
 import os
-import librosa
-import librosa.display
-import matplotlib.pyplot as plt
-import numpy as np
+import subprocess
+import concurrent.futures
+from tqdm import tqdm
 
-# 📁 Thư mục chứa file .wav chuẩn hóa
-input_dir = r'D:\Dữ liệu về tiếng ho NCKH\COUGHVID Dataset\coughvid_dataset\covidWAV'
-# 📁 Thư mục lưu ảnh spectrogram
-output_dir = r'D:\Dữ liệu về tiếng ho NCKH\COUGHVID Dataset\coughvid_dataset\covidSPECTROGRAM'
+input_dir = r'D:\Dữ liệu về tiếng ho NCKH\COUGHVID Dataset\WAVdata'
+output_dir = r'D:\Dữ liệu về tiếng ho NCKH\COUGHVID Dataset\SPECTROGRAMdata'
 os.makedirs(output_dir, exist_ok=True)
 
-# 🎯 Kích thước ảnh đầu ra (pixels)
 IMG_SIZE = 128
+TIMEOUT_SECONDS = 10
 
-# 🔁 Duyệt qua từng file .wav
-for filename in os.listdir(input_dir):
-    if filename.endswith('.wav'):
-        audio_path = os.path.join(input_dir, filename)
-        output_filename = os.path.splitext(filename)[0] + ".png"
-        output_path = os.path.join(output_dir, output_filename)
+def process_file(filename):
+    try:
+        # Gọi file xử lý riêng (sử dụng subprocess)
+        command = [
+            "python", "single_proces.py",  # 📌 Bạn cần tạo file này bên ngoài (viết bên dưới)
+            filename, input_dir, output_dir, str(IMG_SIZE)
+        ]
+        subprocess.run(command, timeout=TIMEOUT_SECONDS, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return filename, True, None
+    except subprocess.TimeoutExpired:
+        return filename, False, "Timeout"
+    except subprocess.CalledProcessError:
+        return filename, False, "Subprocess error"
 
-        print(f"🔧 Đang xử lý: {filename}")
-        try:
-            # 1. Load âm thanh
-            y, sr = librosa.load(audio_path, sr=None)
+if __name__ == "__main__":
+    files = [f for f in os.listdir(input_dir) if f.endswith('.wav')]
+    errors = []
 
-            # (Tùy chọn) Bỏ qua file âm thanh quá ngắn
-            if len(y) < sr * 0.5:
-                print(f"⚠️ File quá ngắn, bỏ qua: {filename}")
-                continue
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        futures = {executor.submit(process_file, filename): filename for filename in files}
 
-            # 2. Tính STFT rồi chuyển thành dB
-            D = librosa.stft(y, n_fft=1024, hop_length=256)
-            S_db = librosa.amplitude_to_db(np.abs(D), ref=np.max)
+        for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc="Chuyển đổi"):
+            filename = futures[future]
+            result = future.result()
+            filename, success, error = result
+            if not success:
+                errors.append((filename, error))
 
-            # 3. Vẽ ảnh không có trục, không padding
-            fig = plt.figure(figsize=(IMG_SIZE / 100, IMG_SIZE / 100), dpi=100)
-            plt.axis('off')
-            librosa.display.specshow(S_db, sr=sr, cmap='magma')
-            plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
+    if errors:
+        with open("error_spectrogram_log.txt", "w", encoding="utf-8") as f:
+            for filename, err in errors:
+                f.write(f"{filename}: {err}\n")
 
-            # 4. Lưu ảnh
-            fig.savefig(output_path, bbox_inches='tight', pad_inches=0)
-            plt.close(fig)
-            print(f"✅ Đã lưu: {output_filename}")
-
-        except Exception as e:
-            print(f"❌ Lỗi khi xử lý {filename}: {e}")
-
-print("\n🎉 Hoàn tất tạo ảnh spectrogram 128x128 từ toàn bộ file .wav")
+    print("\n🎉 Hoàn tất!")

@@ -1,0 +1,30 @@
+import sys
+import os
+import numpy as np
+import librosa
+import librosa.display
+import matplotlib.pyplot as plt
+import soundfile as sf
+
+filename, input_dir, output_dir, IMG_SIZE = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
+audio_path = os.path.join(input_dir, filename)
+output_filename = os.path.splitext(filename)[0] + '.png'
+output_path = os.path.join(output_dir, output_filename)
+
+y, sr = sf.read(audio_path)
+if len(y.shape) > 1:
+    y = y.mean(axis=1)
+
+if sr != 22050:
+    y = librosa.resample(y, orig_sr=sr, target_sr=22050)
+    sr = 22050
+
+S = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=128)
+S_db = librosa.power_to_db(S, ref=np.max)
+
+fig = plt.figure(figsize=(IMG_SIZE / 100, IMG_SIZE / 100), dpi=100)
+plt.axis('off')
+librosa.display.specshow(S_db, sr=sr, cmap='magma')
+plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
+fig.savefig(output_path, bbox_inches='tight', pad_inches=0)
+plt.close(fig)
