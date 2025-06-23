@@ -1,9 +1,12 @@
 # ====== CÀI ĐẶT THƯ VIỆN ======
-!pip install tensorflow pandas matplotlib openpyxl tqdm
+!pip install tensorflow pandas matplotlib openpyxl tqdm pytz scikit-learn
 
 # ====== KẾT NỐI GOOGLE DRIVE ======
 from google.colab import drive
 drive.mount('/content/drive')
+
+# ====== KILL TENSORBOARD ======
+!kill $(pgrep tensorboard) || echo "No TensorBoard process found"
 
 # ====== THƯ VIỆN ======
 import os, random, shutil
@@ -14,23 +17,24 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 from datetime import datetime
+import pytz
 from sklearn.utils.class_weight import compute_class_weight
 from tensorflow.keras.callbacks import TensorBoard, EarlyStopping, ReduceLROnPlateau
+from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay
 
 # ====== KÍCH HOẠT TENSORBOARD ======
 %load_ext tensorboard
 
 # ====== CẤU HÌNH ======
-ORIGINAL_DIR = '/content/drive/MyDrive/Tài liệu NCKH/Dataset/coughvid_dataset'
-OUTPUT_SPLIT_DIR = '/content/drive/MyDrive/Tài liệu NCKH/Dataset/coughvid_datasetfull'
-RESULT_PARENT_DIR = '/content/drive/MyDrive/Tài liệu NCKH/AIData'
-
-timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+tz = pytz.timezone('Asia/Ho_Chi_Minh')
+timestamp = datetime.now(tz).strftime("%Y%m%d_%H%M%S")
+ORIGINAL_DIR = '/content/drive/MyDrive/Tai_Lieu_NCKH/Dataset/coughvid_dataset'
+OUTPUT_SPLIT_DIR = '/content/drive/MyDrive/Tai_Lieu_NCKH/Dataset/coughvid_datasetfull'
+RESULT_PARENT_DIR = '/content/drive/MyDrive/Tai_Lieu_NCKH/AIData'
 OUTPUT_DIR = os.path.join(RESULT_PARENT_DIR, timestamp)
-os.makedirs(OUTPUT_DIR, exist_ok=True)
 TENSORBOARD_LOG_DIR = os.path.join(OUTPUT_DIR, "tensorboard_logs")
 os.makedirs(TENSORBOARD_LOG_DIR, exist_ok=True)
-print(f" Thư mục lưu kết quả lần train này: {OUTPUT_DIR}")
+print(f"✅ Thư mục lưu kết quả lần train này: {OUTPUT_DIR}")
 
 IMG_SIZE = (224, 224)
 BATCH_SIZE = 32
@@ -38,7 +42,7 @@ EPOCHS = 50
 MODEL_NAME = "efficientnetb3_cough_model"
 train_ratio, val_ratio, test_ratio = 0.7, 0.2, 0.1
 
-# ====== HÀM CHIA DATASET ======
+# ====== CHIA DATASET ======
 def split_dataset(original_dir, output_dir, train_ratio, val_ratio, test_ratio):
     for cls in os.listdir(original_dir):
         cls_path = os.path.join(original_dir, cls)
@@ -56,7 +60,7 @@ def split_dataset(original_dir, output_dir, train_ratio, val_ratio, test_ratio):
 
 split_dataset(ORIGINAL_DIR, OUTPUT_SPLIT_DIR, train_ratio, val_ratio, test_ratio)
 
-# ====== TẢI DỮ LIỆU ======
+# ====== LOAD DATA ======
 train_ds = tf.keras.preprocessing.image_dataset_from_directory(
     os.path.join(OUTPUT_SPLIT_DIR, "train"), image_size=IMG_SIZE, batch_size=BATCH_SIZE
 )
@@ -81,16 +85,16 @@ data_augmentation = tf.keras.Sequential([
     layers.RandomTranslation(0.05, 0.05),
     layers.RandomZoom(0.05, 0.05),
     layers.RandomContrast(0.1),
-    layers.GaussianNoise(0.03),  # Bổ sung Gaussian noise để tăng độ tổng quát
+    layers.GaussianNoise(0.03),
 ])
 
-# ====== TÍNH CLASS WEIGHT ======
+# ====== CLASS WEIGHT ======
 labels = [int(y.numpy()) for _, y in train_ds.unbatch()]
 class_weights = compute_class_weight("balanced", classes=np.arange(num_classes), y=labels)
 class_weight_dict = {i: w for i, w in enumerate(class_weights)}
 print("Class weights:", class_weight_dict)
 
-# ====== XÂY DỰNG MÔ HÌNH EfficientNetB3 ======
+# ====== MÔ HÌNH EfficientNetB3 ======
 base_model = EfficientNetB3(include_top=False, weights='imagenet', input_shape=(224, 224, 3))
 base_model.trainable = False
 
@@ -99,37 +103,37 @@ model = models.Sequential([
     layers.Rescaling(1./255),
     base_model,
     layers.GlobalAveragePooling2D(),
-    layers.Dropout(0.4),                           # Tăng Dropout từ 0.3 → 0.4 để giảm overfitting
+    layers.Dropout(0.4),
     layers.Dense(num_classes, activation='softmax')
 ])
 
 model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
 
 # ====== CALLBACK ======
-tensorboard_callback = TensorBoard(log_dir=TENSORBOARD_LOG_DIR, histogram_freq=1)
-earlystopping_callback = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
-reduce_lr_callback = ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=3, min_lr=1e-6)
-callbacks = [tensorboard_callback, earlystopping_callback, reduce_lr_callback]
+callbacks = [
+    TensorBoard(log_dir=TENSORBOARD_LOG_DIR, histogram_freq=1),
+    EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True),
+    ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=3, min_lr=1e-6)
+]
 
-# ====== HUẤN LUYỆN LẦN 1 ======
+# ====== TRAIN LẦN 1 ======
 history = model.fit(
-    train_ds, validation_data=val_ds, epochs=EPOCHS, callbacks=callbacks,
-    class_weight=class_weight_dict
+    train_ds, validation_data=val_ds, epochs=EPOCHS,
+    callbacks=callbacks, class_weight=class_weight_dict
 )
 
-# ====== FINE-TUNE 50 LAYER CUỐI EfficientNetB3 ======
+# ====== FINE-TUNE 50 LAYER CUỐI ======
 base_model.trainable = True
-for layer in base_model.layers[:-50]:  # Chỉ fine-tune 50 layer cuối
-    layer.trainable = False
+for layer in base_model.layers[:-50]: layer.trainable = False
 
 model.compile(optimizer=tf.keras.optimizers.Adam(1e-5), loss='sparse_categorical_crossentropy', metrics=['accuracy'])
 
 history_fine = model.fit(
-    train_ds, validation_data=val_ds, epochs=30, callbacks=callbacks,
-    class_weight=class_weight_dict
+    train_ds, validation_data=val_ds, epochs=30,
+    callbacks=callbacks, class_weight=class_weight_dict
 )
 
-# ====== GHI LOG & VẼ BIỂU ĐỒ ======
+# ====== LƯU LOG + VẼ BIỂU ĐỒ ======
 def save_training_log(history, history_fine=None, output_folder=OUTPUT_DIR, prefix=MODEL_NAME):
     history_data = history.history
     if history_fine:
@@ -152,30 +156,37 @@ def save_training_log(history, history_fine=None, output_folder=OUTPUT_DIR, pref
 
     plt.figure(figsize=(8, 5))
     plt.plot(df['Epoch'], df['Accuracy'], label='Train Accuracy')
-    plt.plot(df['Epoch'], df['Val Accuracy'], label='Validation Accuracy')
-    plt.xlabel('Epoch'); plt.ylabel('Accuracy')
-    plt.title('Accuracy theo Epoch'); plt.legend(); plt.grid(); plt.tight_layout()
+    plt.plot(df['Epoch'], df['Val Accuracy'], label='Val Accuracy')
+    plt.xlabel('Epoch'); plt.ylabel('Accuracy'); plt.legend(); plt.grid()
     plt.savefig(acc_plot); plt.close()
 
     plt.figure(figsize=(8, 5))
     plt.plot(df['Epoch'], df['Loss'], label='Train Loss')
-    plt.plot(df['Epoch'], df['Val Loss'], label='Validation Loss')
-    plt.xlabel('Epoch'); plt.ylabel('Loss')
-    plt.title('Loss theo Epoch'); plt.legend(); plt.grid(); plt.tight_layout()
+    plt.plot(df['Epoch'], df['Val Loss'], label='Val Loss')
+    plt.xlabel('Epoch'); plt.ylabel('Loss'); plt.legend(); plt.grid()
     plt.savefig(loss_plot); plt.close()
 
-    print(f" Đã lưu file Excel và biểu đồ vào: {output_folder}")
+    print(f"✅ Đã lưu log và biểu đồ vào: {output_folder}")
 
 save_training_log(history, history_fine)
 
 # ====== LƯU MÔ HÌNH CUỐI CÙNG ======
 MODEL_FILE = os.path.join(OUTPUT_DIR, f"{MODEL_NAME}.keras")
 model.save(MODEL_FILE)
-print(" Đã lưu mô hình:", MODEL_FILE)
+print("✅ Đã lưu mô hình:", MODEL_FILE)
 
-# ====== ĐÁNH GIÁ TRÊN TẬP TEST ======
+# ====== ĐÁNH GIÁ TRÊN TEST SET ======
 test_loss, test_acc = model.evaluate(test_ds)
-print(f" Test Accuracy: {test_acc*100:.2f}%")
+print(f"✅ Test Accuracy: {test_acc*100:.2f}%")
 
-# ====== CHẠY TENSORBOARD ======
-%tensorboard --logdir $TENSORBOARD_LOG_DIR
+# ====== CONFUSION MATRIX ======
+y_true = np.concatenate([y.numpy() for _, y in test_ds], axis=0)
+y_pred = np.argmax(model.predict(test_ds), axis=1)
+print("\nClassification Report:\n", classification_report(y_true, y_pred, target_names=class_names))
+
+cm = confusion_matrix(y_true, y_pred)
+disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=class_names)
+disp.plot(cmap='Blues'); plt.title("Confusion Matrix"); plt.show()
+
+# ====== TENSORBOARD ======
+%tensorboard --logdir "$TENSORBOARD_LOG_DIR"
