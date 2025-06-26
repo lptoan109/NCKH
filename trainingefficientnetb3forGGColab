@@ -5,9 +5,6 @@
 from google.colab import drive
 drive.mount('/content/drive')
 
-# ====== KILL TENSORBOARD ======
-!kill $(pgrep tensorboard) || echo "No TensorBoard process found"
-
 # ====== THƯ VIỆN ======
 import os, random, shutil
 import tensorflow as tf
@@ -19,46 +16,22 @@ import numpy as np
 from datetime import datetime
 import pytz
 from sklearn.utils.class_weight import compute_class_weight
-from tensorflow.keras.callbacks import TensorBoard, EarlyStopping, ReduceLROnPlateau
+from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
 from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay
-
-# ====== KÍCH HOẠT TENSORBOARD ======
-%load_ext tensorboard
 
 # ====== CẤU HÌNH ======
 tz = pytz.timezone('Asia/Ho_Chi_Minh')
 timestamp = datetime.now(tz).strftime("%Y%m%d_%H%M%S")
-ORIGINAL_DIR = '/content/drive/MyDrive/Tai_Lieu_NCKH/Dataset/coughvid_dataset'
 OUTPUT_SPLIT_DIR = '/content/drive/MyDrive/Tai_Lieu_NCKH/Dataset/coughvid_datasetfull'
-RESULT_PARENT_DIR = '/content/drive/MyDrive/Tai_Lieu_NCKH/AIData'
+RESULT_PARENT_DIR = '/content/drive/MyDrive/Tai_Lieu_NCKH/AIData/efficientnetb3'
 OUTPUT_DIR = os.path.join(RESULT_PARENT_DIR, timestamp)
-TENSORBOARD_LOG_DIR = os.path.join(OUTPUT_DIR, "tensorboard_logs")
-os.makedirs(TENSORBOARD_LOG_DIR, exist_ok=True)
-print(f"✅ Thư mục lưu kết quả lần train này: {OUTPUT_DIR}")
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+print(f" Thư mục lưu kết quả lần train này: {OUTPUT_DIR}")
 
 IMG_SIZE = (224, 224)
 BATCH_SIZE = 32
 EPOCHS = 50
 MODEL_NAME = "efficientnetb3_cough_model"
-train_ratio, val_ratio, test_ratio = 0.7, 0.2, 0.1
-
-# ====== CHIA DATASET ======
-def split_dataset(original_dir, output_dir, train_ratio, val_ratio, test_ratio):
-    for cls in os.listdir(original_dir):
-        cls_path = os.path.join(original_dir, cls)
-        if not os.path.isdir(cls_path): continue
-        images = [f for f in os.listdir(cls_path) if os.path.isfile(os.path.join(cls_path, f))]
-        random.shuffle(images)
-        total = len(images)
-        train_end = int(total * train_ratio)
-        val_end = train_end + int(total * val_ratio)
-        for split, start, end in [('train', 0, train_end), ('val', train_end, val_end), ('test', val_end, total)]:
-            split_cls_dir = os.path.join(output_dir, split, cls)
-            os.makedirs(split_cls_dir, exist_ok=True)
-            for img in images[start:end]:
-                shutil.copy2(os.path.join(cls_path, img), os.path.join(split_cls_dir, img))
-
-split_dataset(ORIGINAL_DIR, OUTPUT_SPLIT_DIR, train_ratio, val_ratio, test_ratio)
 
 # ====== LOAD DATA ======
 train_ds = tf.keras.preprocessing.image_dataset_from_directory(
@@ -70,23 +43,23 @@ val_ds = tf.keras.preprocessing.image_dataset_from_directory(
 test_ds = tf.keras.preprocessing.image_dataset_from_directory(
     os.path.join(OUTPUT_SPLIT_DIR, "test"), image_size=IMG_SIZE, batch_size=BATCH_SIZE
 )
-
-class_names = train_ds.class_names
-num_classes = len(class_names)
+class_names = train_ds.class_names              # Danh sách tên lớp (theo thư mục con)
+num_classes = len(class_names)                 # Tổng số lớp
 print("Các lớp:", class_names)
 
-AUTOTUNE = tf.data.AUTOTUNE
-train_ds = train_ds.prefetch(AUTOTUNE)
-val_ds = val_ds.prefetch(AUTOTUNE)
-test_ds = test_ds.prefetch(AUTOTUNE)
 
-# ====== DATA AUGMENTATION PHÙ HỢP SPECTROGRAM ======
-data_augmentation = tf.keras.Sequential([
-    layers.RandomTranslation(0.05, 0.05),
-    layers.RandomZoom(0.05, 0.05),
-    layers.RandomContrast(0.1),
-    layers.GaussianNoise(0.03),
-])
+# ====== THÊM DATA AUGMENTATION ======
+def add_noise_to_image(image, label, noise_factor=0.02):
+    image = tf.cast(image, tf.float32) / 255.0
+    noise = tf.random.normal(shape=tf.shape(image), mean=0.0, stddev=1.0)
+    noisy_image = image + noise_factor * noise
+    noisy_image = tf.clip_by_value(noisy_image, 0.0, 1.0)
+    noisy_image = noisy_image * 255.0
+    return noisy_image, label
+
+def combined_augment(image, label):
+    image, label = add_noise_to_image(image, label)
+    return image, label
 
 # ====== CLASS WEIGHT ======
 labels = [int(y.numpy()) for _, y in train_ds.unbatch()]
@@ -111,8 +84,7 @@ model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=
 
 # ====== CALLBACK ======
 callbacks = [
-    TensorBoard(log_dir=TENSORBOARD_LOG_DIR, histogram_freq=1),
-    EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True),
+    EarlyStopping(monitor='val_loss', patience=20, restore_best_weights=True),
     ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=3, min_lr=1e-6)
 ]
 
@@ -133,12 +105,34 @@ history_fine = model.fit(
     callbacks=callbacks, class_weight=class_weight_dict
 )
 
+# ====== FINE-TUNE TOÀN BỘ BASE_MODEL ======
+print(" Bắt đầu fine-tune toàn bộ EfficientNetB3 với learning rate nhỏ...")
+
+base_model.trainable = True
+model.compile(
+    optimizer=tf.keras.optimizers.Adam(1e-6),
+    loss='sparse_categorical_crossentropy',
+    metrics=['accuracy']
+)
+
+history_full_fine = model.fit(
+    train_ds, validation_data=val_ds, epochs=50,
+    callbacks=callbacks, class_weight=class_weight_dict
+)
+
+# ====== ĐÁNH GIÁ TRÊN TEST SET ======
+test_loss, test_acc = model.evaluate(test_ds)
+print(f"✅ Test Accuracy sau fine-tune toàn bộ: {test_acc*100:.2f}%")
+
 # ====== LƯU LOG + VẼ BIỂU ĐỒ ======
-def save_training_log(history, history_fine=None, output_folder=OUTPUT_DIR, prefix=MODEL_NAME):
+def save_training_log(history, history_fine=None, history_full_fine=None, output_folder=OUTPUT_DIR, prefix=MODEL_NAME):
     history_data = history.history
     if history_fine:
         for key in history_fine.history:
             history_data[key].extend(history_fine.history[key])
+    if history_full_fine:
+        for key in history_full_fine.history:
+            history_data[key].extend(history_full_fine.history[key])
 
     df = pd.DataFrame({
         'Epoch': list(range(1, len(history_data['accuracy']) + 1)),
@@ -154,6 +148,14 @@ def save_training_log(history, history_fine=None, output_folder=OUTPUT_DIR, pref
 
     df.to_excel(excel_path, index=False)
 
+# Lưu thêm sheet kết quả test
+    test_results_df = pd.DataFrame({
+        'True Label': [class_names[i] for i in y_true],
+        'Predicted Label': [class_names[i] for i in y_pred]
+    })
+    with pd.ExcelWriter(excel_path, engine='openpyxl', mode='a') as writer:
+        test_results_df.to_excel(writer, index=False, sheet_name='Test Results')
+
     plt.figure(figsize=(8, 5))
     plt.plot(df['Epoch'], df['Accuracy'], label='Train Accuracy')
     plt.plot(df['Epoch'], df['Val Accuracy'], label='Val Accuracy')
@@ -168,25 +170,26 @@ def save_training_log(history, history_fine=None, output_folder=OUTPUT_DIR, pref
 
     print(f"✅ Đã lưu log và biểu đồ vào: {output_folder}")
 
-save_training_log(history, history_fine)
+save_training_log(history, history_fine, history_full_fine)
 
 # ====== LƯU MÔ HÌNH CUỐI CÙNG ======
-MODEL_FILE = os.path.join(OUTPUT_DIR, f"{MODEL_NAME}.keras")
+MODEL_FILE = os.path.join(OUTPUT_DIR, f"{MODEL_NAME}_finetune_full.keras")
 model.save(MODEL_FILE)
-print("✅ Đã lưu mô hình:", MODEL_FILE)
+print("✅ Đã lưu mô hình sau fine-tune toàn bộ:", MODEL_FILE)
 
-# ====== ĐÁNH GIÁ TRÊN TEST SET ======
-test_loss, test_acc = model.evaluate(test_ds)
-print(f"✅ Test Accuracy: {test_acc*100:.2f}%")
 
 # ====== CONFUSION MATRIX ======
 y_true = np.concatenate([y.numpy() for _, y in test_ds], axis=0)
 y_pred = np.argmax(model.predict(test_ds), axis=1)
-print("\nClassification Report:\n", classification_report(y_true, y_pred, target_names=class_names))
+print("\nClassification Report (Fine-tune Full):\n", classification_report(y_true, y_pred, target_names=class_names))
 
+# ====== LƯU CONFUSION MATRIX VÀO FILE ======
 cm = confusion_matrix(y_true, y_pred)
+cm_plot_path = os.path.join(OUTPUT_DIR, f"{MODEL_NAME}_confusion_matrix.png")
+fig, ax = plt.subplots(figsize=(8, 8))
 disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=class_names)
-disp.plot(cmap='Blues'); plt.title("Confusion Matrix"); plt.show()
-
-# ====== TENSORBOARD ======
-%tensorboard --logdir "$TENSORBOARD_LOG_DIR"
+disp.plot(cmap='Blues', ax=ax)
+plt.title("Confusion Matrix (Fine-tune Full)")
+plt.savefig(cm_plot_path)
+plt.close()
+print(f"✅ Đã lưu confusion matrix vào: {cm_plot_path}")
