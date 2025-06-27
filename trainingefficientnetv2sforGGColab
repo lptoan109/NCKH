@@ -48,13 +48,13 @@ num_classes = len(class_names)
 print("Các lớp:", class_names)
 
 # ====== THÊM DATA AUGMENTATION ======
-def add_noise_to_image(image, label, noise_factor=0.02):
+def add_noise_to_image(image, label, noise_factor=0.005):
     image = tf.cast(image, tf.float32) / 255.0
     noise = tf.random.normal(shape=tf.shape(image), mean=0.0, stddev=1.0)
     noisy_image = image + noise_factor * noise
     noisy_image = tf.clip_by_value(noisy_image, 0.0, 1.0)
-    noisy_image = noisy_image * 255.0
     return noisy_image, label
+
 
 def combined_augment(image, label):
     image, label = add_noise_to_image(image, label)
