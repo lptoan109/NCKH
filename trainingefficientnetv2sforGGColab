@@ -48,7 +48,7 @@ class_names = train_ds.class_names
 num_classes = len(class_names)
 print("Các lớp:", class_names)
 
- ====== THÊM DATA AUGMENTATION ======
+# ====== THÊM DATA AUGMENTATION ======
 def add_noise_to_image(image, label, noise_factor=0.005):
     image = tf.cast(image, tf.float32) / 255.0
     noise = tf.random.normal(shape=tf.shape(image), mean=0.0, stddev=1.0)
@@ -92,10 +92,19 @@ callbacks = [
 
 # ====== TRAIN LẦN 1 (Freeze base) ======
 print("Bắt đầu train lần đầu EfficientNetV2-S...")
+cosine_scheduler = tf.keras.optimizers.schedules.CosineDecay(
+    initial_learning_rate=1e-4,
+    decay_steps=80*EPOCHS,
+    alpha=1e-2
+)
+optimizer = tf.keras.optimizers.Adam(learning_rate=cosine_scheduler)
+
 history = model.fit(
     train_ds, validation_data=val_ds, epochs=EPOCHS,
     callbacks=callbacks, class_weight=class_weight_dict
 )
+
+model.compile(optimizer=optimizer, loss='sparse_categorical_crossentropy', metrics=['accuracy'])
 
 # ====== FINE-TUNE 50 LỚP CUỐI ======
 print("Bắt đầu fine-tune 50 layers EfficientNetV2-S...")
@@ -105,7 +114,7 @@ for layer in base_model.layers[:-50]:
 
 cosine_scheduler = tf.keras.optimizers.schedules.CosineDecay(
     initial_learning_rate=1e-4,
-    decay_steps=80*EPOCHS,      # ví dụ: fine-tune toàn bộ 50 epoch
+    decay_steps=80*EPOCHS,
     alpha=1e-2
 )
 optimizer = tf.keras.optimizers.Adam(learning_rate=cosine_scheduler)
