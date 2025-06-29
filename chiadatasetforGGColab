@@ -1,0 +1,59 @@
+# ====== CÀI ĐẶT GOOGLE DRIVE & THƯ VIỆN ======
+from google.colab import drive
+drive.mount('/content/drive', force_remount=True)
+
+import os
+import random
+import shutil
+from tqdm import tqdm
+
+# ====== CONFIG ======
+INPUT_DIR = "/content/drive/MyDrive/my_dataset_mfcc_images"   # 📌 folder chứa các class (ảnh MFCC)
+OUTPUT_DIR = "/content/drive/MyDrive/my_dataset_split"        # 📌 folder chứa train/val/test sau khi chia
+TRAIN_RATIO = 0.7
+VAL_RATIO = 0.15
+TEST_RATIO = 0.15
+SEED = 42
+
+random.seed(SEED)
+
+# ====== TẠO FOLDER train/val/test ======
+for split in ['train', 'val', 'test']:
+    for class_name in os.listdir(INPUT_DIR):
+        class_path = os.path.join(INPUT_DIR, class_name)
+        if os.path.isdir(class_path):
+            os.makedirs(os.path.join(OUTPUT_DIR, split, class_name), exist_ok=True)
+
+# ====== CHIA FILE & COPY ======
+for class_name in os.listdir(INPUT_DIR):
+    class_path = os.path.join(INPUT_DIR, class_name)
+    if not os.path.isdir(class_path):
+        continue
+    
+    # lọc file ảnh
+    files = [f for f in os.listdir(class_path) if f.endswith(('.png', '.jpg', '.jpeg'))]
+    random.shuffle(files)
+    
+    n_total = len(files)
+    n_train = int(n_total * TRAIN_RATIO)
+    n_val = int(n_total * VAL_RATIO)
+    n_test = n_total - n_train - n_val
+
+    train_files = files[:n_train]
+    val_files = files[n_train:n_train+n_val]
+    test_files = files[n_train+n_val:]
+
+    print(f"\nClass: {class_name}")
+    print(f"  Train: {len(train_files)}")
+    print(f"  Val:   {len(val_files)}")
+    print(f"  Test:  {len(test_files)}")
+
+    # copy files
+    for file_list, split in zip([train_files, val_files, test_files], ['train', 'val', 'test']):
+        dest_dir = os.path.join(OUTPUT_DIR, split, class_name)
+        for file_name in tqdm(file_list, desc=f"Copying {split}/{class_name}"):
+            src_path = os.path.join(class_path, file_name)
+            dest_path = os.path.join(dest_dir, file_name)
+            shutil.copy2(src_path, dest_path)
+
+print("\n✅ Hoàn tất chia dataset! Bạn có thể kiểm tra trong Google Drive.")
