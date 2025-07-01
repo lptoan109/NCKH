@@ -1,0 +1,140 @@
+# ===========================================
+# Cài đặt thư viện
+# ===========================================
+!pip install -q numpy pandas matplotlib seaborn openpyxl scikit-learn tensorflow tensorflow-hub librosa soundfile
+
+from google.colab import drive
+drive.mount('/content/drive', force_remount=True)
+
+import os
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from datetime import datetime
+import pytz
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report, confusion_matrix
+from sklearn.svm import SVC
+import tensorflow_hub as hub
+import librosa
+import soundfile as sf
+
+# ===========================================
+# Tạo thư mục output
+# ===========================================
+tz = pytz.timezone('Asia/Ho_Chi_Minh')
+timestamp = datetime.now(tz).strftime("%Y%m%d_%H%M%S")
+OUTPUT_DIR = f'/content/drive/MyDrive/Tai_Lieu_NCKH/AIData/svm_combined/{timestamp}'
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+print("Thư mục output:", OUTPUT_DIR)
+
+# ===========================================
+# Load mô hình YAMNet
+# ===========================================
+yamnet_model = hub.load('https://tfhub.dev/google/yamnet/1')
+
+# ===========================================
+# Trích xuất feature kết hợp
+# ===========================================
+input_wav_dir = '/content/drive/MyDrive/Tai_Lieu_NCKH/Dataset/wav_dataset'
+output_npy_dir = os.path.join(OUTPUT_DIR, "combined_features")
+os.makedirs(output_npy_dir, exist_ok=True)
+
+def extract_combined_feature(wav_path):
+    wav_data, sr = sf.read(wav_path)
+    if len(wav_data.shape) > 1:
+        wav_data = np.mean(wav_data, axis=1)
+    if sr != 16000:
+        wav_data = librosa.resample(wav_data, orig_sr=sr, target_sr=16000)
+    
+    # YAMNet
+    scores, embeddings, spectrogram = yamnet_model(wav_data)
+    mean_yamnet = np.mean(embeddings.numpy(), axis=0)
+    
+    # MFCC
+    mfcc = librosa.feature.mfcc(y=wav_data, sr=16000, n_mfcc=13)
+    mfcc_mean = np.mean(mfcc, axis=1)
+    
+    # spectral rolloff
+    rolloff = librosa.feature.spectral_rolloff(y=wav_data, sr=16000)
+    rolloff_mean = np.mean(rolloff)
+    
+    # zero crossing rate
+    zcr = librosa.feature.zero_crossing_rate(wav_data)
+    zcr_mean = np.mean(zcr)
+    
+    # rms energy
+    rms = librosa.feature.rms(y=wav_data)
+    rms_mean = np.mean(rms)
+    
+    # Ghép tất cả
+    combined_feature = np.concatenate([mean_yamnet, mfcc_mean, [rolloff_mean, zcr_mean, rms_mean]])
+    return combined_feature
+
+for label_name in sorted(os.listdir(input_wav_dir)):
+    label_folder = os.path.join(input_wav_dir, label_name)
+    if not os.path.isdir(label_folder):
+        continue
+    output_label_folder = os.path.join(output_npy_dir, label_name)
+    os.makedirs(output_label_folder, exist_ok=True)
+    for file in os.listdir(label_folder):
+        if file.lower().endswith('.wav'):
+            feature = extract_combined_feature(os.path.join(label_folder, file))
+            np.save(os.path.join(output_label_folder, file.replace('.wav', '.npy')), feature)
+    print("Xong lớp:", label_name)
+print("Hoàn thành trích xuất feature kết hợp.")
+
+# ===========================================
+# Load data vào X, y
+# ===========================================
+label_names = sorted([d for d in os.listdir(output_npy_dir) if os.path.isdir(os.path.join(output_npy_dir, d))])
+label_map = {name: idx for idx, name in enumerate(label_names)}
+print("Label mapping:", label_map)
+
+X, y = [], []
+for label_name in label_names:
+    folder = os.path.join(output_npy_dir, label_name)
+    for file in os.listdir(folder):
+        if file.endswith(".npy"):
+            X.append(np.load(os.path.join(folder, file)))
+            y.append(label_map[label_name])
+
+X, y = np.array(X), np.array(y)
+print(f"Kích thước dataset: {X.shape}, Nhãn: {y.shape}")
+
+# ===========================================
+# Chia train / test
+# ===========================================
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, stratify=y)
+print(f"Train shape: {X_train.shape}, Test shape: {X_test.shape}")
+
+# ===========================================
+# Huấn luyện SVM
+# ===========================================
+svm_clf = SVC(kernel='rbf', probability=True, class_weight='balanced', random_state=42)
+svm_clf.fit(X_train, y_train)
+
+# ===========================================
+# Đánh giá trên test
+# ===========================================
+y_pred = svm_clf.predict(X_test)
+report = classification_report(y_test, y_pred, target_names=label_names, output_dict=True)
+cm = confusion_matrix(y_test, y_pred)
+
+# ===========================================
+# Lưu kết quả
+# ===========================================
+excel_path = os.path.join(OUTPUT_DIR, f"{timestamp}_svm_report.xlsx")
+pd.DataFrame(report).transpose().to_excel(excel_path)
+with pd.ExcelWriter(excel_path, engine='openpyxl', mode='a') as writer:
+    pd.DataFrame({'True': [label_names[i] for i in y_test], 'Pred': [label_names[i] for i in y_pred]}).to_excel(writer, index=False, sheet_name='Test Results')
+
+plt.figure(figsize=(8,8))
+sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=label_names, yticklabels=label_names)
+plt.title("Ma trận nhầm lẫn (SVM combined features)")
+plt.savefig(os.path.join(OUTPUT_DIR, f"{timestamp}_confusion_matrix.png"))
+plt.close()
+
+print("Độ chính xác trên tập test:", f"{report['accuracy']*100:.2f}%")
+print("Đã lưu toàn bộ kết quả tại:", OUTPUT_DIR)

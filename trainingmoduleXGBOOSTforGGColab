@@ -1,0 +1,204 @@
+# ===========================================
+# Cài đặt thư viện cần thiết
+# ===========================================
+!pip install -q xgboost numpy pandas matplotlib seaborn openpyxl pytz scikit-learn tensorflow tensorflow-hub librosa soundfile
+
+from google.colab import drive
+drive.mount('/content/drive', force_remount=True)
+
+import os
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from datetime import datetime
+import pytz
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report, confusion_matrix
+import xgboost as xgb
+import tensorflow_hub as hub
+import soundfile as sf
+import librosa
+
+# ===========================================
+# Tạo thư mục output để lưu kết quả
+# ===========================================
+tz = pytz.timezone('Asia/Ho_Chi_Minh')
+timestamp = datetime.now(tz).strftime("%Y%m%d_%H%M%S")
+OUTPUT_DIR = f'/content/drive/MyDrive/Tai_Lieu_NCKH/AIData/xgboost/{timestamp}'
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+print("Thư mục output:", OUTPUT_DIR)
+
+# ===========================================
+# Trích xuất feature từ file wav
+# (YAMNet + MFCC + delta + delta-delta)
+# ===========================================
+yamnet_model = hub.load('https://tfhub.dev/google/yamnet/1')
+
+input_wav_dir = '/content/drive/MyDrive/Tai_Lieu_NCKH/Dataset/wav_dataset'
+output_npy_dir = os.path.join(OUTPUT_DIR, "combined_features")
+os.makedirs(output_npy_dir, exist_ok=True)
+
+def extract_combined_feature(wav_path):
+    wav_data, sr = sf.read(wav_path)
+    if len(wav_data.shape) > 1:
+        wav_data = np.mean(wav_data, axis=1)
+    if sr != 16000:
+        wav_data = librosa.resample(wav_data, orig_sr=sr, target_sr=16000)
+    
+    # YAMNet
+    scores, embeddings, spectrogram = yamnet_model(wav_data)
+    mean_yamnet = np.mean(embeddings.numpy(), axis=0)
+    
+    # MFCC
+    mfcc = librosa.feature.mfcc(y=wav_data, sr=16000, n_mfcc=13)
+    mfcc_mean = np.mean(mfcc, axis=1)
+    
+    # spectral rolloff
+    rolloff = librosa.feature.spectral_rolloff(y=wav_data, sr=16000)
+    rolloff_mean = np.mean(rolloff)
+    
+    # zero crossing rate
+    zcr = librosa.feature.zero_crossing_rate(wav_data)
+    zcr_mean = np.mean(zcr)
+    
+    # rms energy
+    rms = librosa.feature.rms(y=wav_data)
+    rms_mean = np.mean(rms)
+    
+    # Ghép tất cả
+    combined_feature = np.concatenate([mean_yamnet, mfcc_mean, [rolloff_mean, zcr_mean, rms_mean]])
+    return combined_feature
+
+for label_name in sorted(os.listdir(input_wav_dir)):
+    label_folder = os.path.join(input_wav_dir, label_name)
+    if not os.path.isdir(label_folder):
+        continue
+    output_label_folder = os.path.join(output_npy_dir, label_name)
+    os.makedirs(output_label_folder, exist_ok=True)
+    for file in os.listdir(label_folder):
+        if file.lower().endswith('.wav'):
+            feature = extract_combined_feature(os.path.join(label_folder, file))
+            np.save(os.path.join(output_label_folder, file.replace('.wav', '.npy')), feature)
+    print("Xong lớp:", label_name)
+print("Hoàn thành trích xuất feature kết hợp.")
+
+# ===========================================
+# Tải dataset vào X, y
+# ===========================================
+label_names = sorted([d for d in os.listdir(output_npy_dir) if os.path.isdir(os.path.join(output_npy_dir, d))])
+label_map = {name: idx for idx, name in enumerate(label_names)}
+print("Label mapping:", label_map)
+
+X, y = [], []
+for label_name in label_names:
+    folder = os.path.join(output_npy_dir, label_name)
+    for file in os.listdir(folder):
+        if file.endswith(".npy"):
+            X.append(np.load(os.path.join(folder, file)).flatten())
+            y.append(label_map[label_name])
+
+X, y = np.array(X), np.array(y)
+print(f"Kích thước dataset: {X.shape}, Nhãn: {y.shape}")
+
+# ===========================================
+# Tính trọng số class để cân bằng
+# ===========================================
+class_counts = np.bincount(y)
+total_samples = len(y)
+class_weights = {i: total_samples / (len(label_names) * c) for i, c in enumerate(class_counts)}
+print("Trọng số class tự động:", class_weights)
+sw = np.array([class_weights[i] for i in y])
+
+# ===========================================
+# Chia train / validation / test
+# ===========================================
+X_train, X_test, y_train, y_test, sw_train, sw_test = train_test_split(X, y, sw, test_size=0.2, stratify=y)
+X_train, X_val, y_train, y_val, sw_train, sw_val = train_test_split(X_train, y_train, sw_train, test_size=0.2, stratify=y_train)
+
+dtrain = xgb.DMatrix(X_train, label=y_train, weight=sw_train)
+dval   = xgb.DMatrix(X_val, label=y_val, weight=sw_val)
+dtest  = xgb.DMatrix(X_test, label=y_test)
+
+# ===========================================
+# Cấu hình tham số XGBoost
+# ===========================================
+param = {
+    'objective': 'multi:softprob',
+    'num_class': 5,
+    'eta': 0.05,
+    'max_depth': 7,
+    'min_child_weight': 1,
+    'subsample': 0.85,
+    'colsample_bytree': 0.85,
+    'gamma': 0.3,
+    'eval_metric': ['mlogloss', 'merror']
+}
+
+# ===========================================
+# Huấn luyện với early stopping
+# ===========================================
+bst = xgb.Booster(params=param, cache=(dtrain, dval))
+best_round = 0
+best_score = float('inf')
+patience = 100
+stop_rounds = 0
+
+logloss_list, accuracy_list = [], []
+
+for i in range(1000):
+    bst.update(dtrain, i)
+    eval_result = bst.eval_set([(dval, 'validation')], i)
+    parts = eval_result.replace('\t',' ').split()
+    mlogloss = float(parts[1].split(":")[1])
+    merror = float(parts[2].split(":")[1])
+    accuracy = (1 - merror) * 100
+    print(f"[{i}] validation-mlogloss:{mlogloss:.5f} validation-merror:{merror:.5f} validation-accuracy:{accuracy:.2f}%")
+    logloss_list.append(mlogloss)
+    accuracy_list.append(accuracy / 100)
+    if mlogloss < best_score:
+        best_score, best_round, stop_rounds = mlogloss, i, 0
+    else:
+        stop_rounds += 1
+        if stop_rounds >= patience:
+            print(f"Early stopping tại vòng {i}")
+            break
+
+# ===========================================
+# Vẽ biểu đồ logloss và accuracy
+# ===========================================
+plt.figure(figsize=(8,5))
+plt.plot(logloss_list, label='Validation LogLoss')
+plt.xlabel("Vòng lặp"); plt.ylabel("LogLoss"); plt.title("XGBoost Validation LogLoss")
+plt.grid(); plt.legend()
+plt.savefig(os.path.join(OUTPUT_DIR, f"{timestamp}_training_logloss.png"))
+plt.show()
+
+plt.figure(figsize=(8,5))
+plt.plot(accuracy_list, label='Validation Accuracy')
+plt.xlabel("Vòng lặp"); plt.ylabel("Accuracy"); plt.title("XGBoost Validation Accuracy")
+plt.grid(); plt.legend()
+plt.savefig(os.path.join(OUTPUT_DIR, f"{timestamp}_training_accuracy.png"))
+plt.show()
+
+# ===========================================
+# Đánh giá trên tập test, lưu kết quả
+# ===========================================
+y_pred = np.argmax(bst.predict(dtest), axis=1)
+report = classification_report(y_test, y_pred, target_names=label_names, output_dict=True)
+cm = confusion_matrix(y_test, y_pred)
+
+excel_path = os.path.join(OUTPUT_DIR, f"{timestamp}_xgboost_report.xlsx")
+pd.DataFrame(report).transpose().to_excel(excel_path)
+with pd.ExcelWriter(excel_path, engine='openpyxl', mode='a') as writer:
+    pd.DataFrame({'True': [label_names[i] for i in y_test], 'Pred': [label_names[i] for i in y_pred]}).to_excel(writer, index=False, sheet_name='Test Results')
+
+plt.figure(figsize=(8,8))
+sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=label_names, yticklabels=label_names)
+plt.title("Ma trận nhầm lẫn (XGBoost)")
+plt.savefig(os.path.join(OUTPUT_DIR, f"{timestamp}_confusion_matrix.png"))
+plt.close()
+
+bst.save_model(os.path.join(OUTPUT_DIR, f"{timestamp}_xgboost_model.json"))
+print("Độ chính xác trên tập test:", f"{report['accuracy']*100:.2f}%")
+print("Đã lưu toàn bộ kết quả tại:", OUTPUT_DIR)
