@@ -1,7 +1,7 @@
 # ===========================================
 # Cài đặt thư viện cần thiết
 # ===========================================
-!pip install -q xgboost==1.7.6 numpy pandas matplotlib seaborn openpyxl pytz scikit-learn tensorflow tensorflow-hub librosa soundfile joblib
+!pip install -q xgboost==1.7.6 numpy pandas matplotlib seaborn openpyxl pytz scikit-learn librosa soundfile joblib imbalanced-learn openl3
 
 from google.colab import drive
 drive.mount('/content/drive', force_remount=True)
@@ -13,78 +13,70 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from datetime import datetime
 import pytz
-from sklearn.model_selection import train_test_split, GridSearchCV, learning_curve
+import gc
+from sklearn.model_selection import train_test_split, StratifiedKFold
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
+from sklearn.metrics import classification_report, confusion_matrix, accuracy_score, f1_score
 from sklearn.utils.class_weight import compute_sample_weight
-from xgboost.sklearn import XGBClassifier
+from xgboost import XGBClassifier
 from xgboost.callback import EarlyStopping
-import tensorflow_hub as hub
 import soundfile as sf
 import librosa
 import joblib
+import openl3
+from itertools import product
 
 # ===========================================
 # Tạo thư mục output
 # ===========================================
 tz = pytz.timezone('Asia/Ho_Chi_Minh')
 timestamp = datetime.now(tz).strftime("%Y%m%d_%H%M%S")
-OUTPUT_DIR = f'/content/drive/MyDrive/Tai_Lieu_NCKH/AIData/xgboost/{timestamp}'
+OUTPUT_DIR = f'/content/drive/MyDrive/Tai_Lieu_NCKH/AIData/hybird/{timestamp}'
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 print("Thư mục output:", OUTPUT_DIR)
 
 # ===========================================
-# Trích xuất feature từ file wav
+# Trích xuất feature từ file wav dùng OpenL3
 # ===========================================
-yamnet_model = hub.load('https://tfhub.dev/google/yamnet/1')
-
 input_wav_dir = '/content/drive/MyDrive/Tai_Lieu_NCKH/Dataset/wav_dataset'
-output_npy_dir = os.path.join(OUTPUT_DIR, "combined_features")
+output_npy_dir = os.path.join(OUTPUT_DIR, "combined_features_openl3")
 os.makedirs(output_npy_dir, exist_ok=True)
 
-def extract_combined_feature(wav_path):
+def extract_combined_feature_openl3(wav_path):
     wav_data, sr = sf.read(wav_path)
     if len(wav_data.shape) > 1:
         wav_data = np.mean(wav_data, axis=1)
-    if sr != 16000:
-        wav_data = librosa.resample(wav_data, orig_sr=sr, target_sr=16000)
-    
-    # YAMNet embedding
-    scores, embeddings, spectrogram = yamnet_model(wav_data)
-    mean_yamnet = np.mean(embeddings.numpy(), axis=0)
+    if sr != 48000:
+        wav_data = librosa.resample(wav_data, orig_sr=sr, target_sr=48000)
 
-    # Spectral features
-    centroid = np.mean(librosa.feature.spectral_centroid(y=wav_data, sr=16000))
-    bandwidth = np.mean(librosa.feature.spectral_bandwidth(y=wav_data, sr=16000))
-    rolloff = np.mean(librosa.feature.spectral_rolloff(y=wav_data, sr=16000))
+    embeddings, _ = openl3.get_audio_embedding(
+        wav_data, sr=48000, input_repr="mel256", content_type="env", embedding_size=512
+    )
+    mean_openl3 = np.mean(embeddings, axis=0)
+
+    centroid = np.mean(librosa.feature.spectral_centroid(y=wav_data, sr=48000))
+    bandwidth = np.mean(librosa.feature.spectral_bandwidth(y=wav_data, sr=48000))
+    rolloff = np.mean(librosa.feature.spectral_rolloff(y=wav_data, sr=48000))
     flatness = np.mean(librosa.feature.spectral_flatness(y=wav_data))
     rms_mean = np.mean(librosa.feature.rms(y=wav_data))
+    duration = librosa.get_duration(y=wav_data, sr=48000)
 
-    # Duration
-    duration = librosa.get_duration(y=wav_data, sr=16000)
-
-    # Onset features
-    onset_env = librosa.onset.onset_strength(y=wav_data, sr=16000)
+    onset_env = librosa.onset.onset_strength(y=wav_data, sr=48000)
     onset_rate_mean = np.mean(onset_env)
-    onset_count = len(librosa.onset.onset_detect(y=wav_data, sr=16000))
+    onset_count = len(librosa.onset.onset_detect(y=wav_data, sr=48000))
     onset_density = onset_count / duration if duration > 0 else 0
 
-    # MFCC
-    mfcc = librosa.feature.mfcc(y=wav_data, sr=16000, n_mfcc=13)
+    mfcc = librosa.feature.mfcc(y=wav_data, sr=48000, n_mfcc=13)
     mfcc_mean = np.mean(mfcc, axis=1)
     mfcc_var = np.var(mfcc, axis=1)
-
-    # Delta MFCC
     delta = librosa.feature.delta(mfcc)
     delta_mean = np.mean(delta, axis=1)
 
-    # Combine all selected features
     combined_feature = np.concatenate([
-        mean_yamnet,
+        mean_openl3,
         [centroid, bandwidth, rolloff, flatness, rms_mean, duration, onset_rate_mean, onset_density],
         mfcc_mean, mfcc_var, delta_mean
     ])
-
     return combined_feature
 
 for label_name in sorted(os.listdir(input_wav_dir)):
@@ -95,7 +87,7 @@ for label_name in sorted(os.listdir(input_wav_dir)):
     os.makedirs(output_label_folder, exist_ok=True)
     for file in os.listdir(label_folder):
         if file.lower().endswith('.wav'):
-            feature = extract_combined_feature(os.path.join(label_folder, file))
+            feature = extract_combined_feature_openl3(os.path.join(label_folder, file))
             np.save(os.path.join(output_label_folder, file.replace('.wav', '.npy')), feature)
     print("Xong lớp:", label_name)
 print("Hoàn thành trích xuất feature.")
@@ -126,7 +118,7 @@ X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, stratif
 X_train, X_val, y_train, y_val = train_test_split(X_train, y_train, test_size=0.2, stratify=y_train)
 
 # ===========================================
-# GridSearchCV với GPU + sample_weight
+# Manual StratifiedKFold tuning + sample_weight
 # ===========================================
 param_grid = {
    'max_depth': [3, 5, 7],
@@ -135,69 +127,87 @@ param_grid = {
    'colsample_bytree': [0.7, 0.85],
    'gamma': [0, 0.15, 0.3]
 }
+param_list = list(product(
+    param_grid['max_depth'],
+    param_grid['learning_rate'],
+    param_grid['subsample'],
+    param_grid['colsample_bytree'],
+    param_grid['gamma']
+))
+sample_weight_all = compute_sample_weight(class_weight='balanced', y=y_train)
+kf = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
 
-xgb_clf = XGBClassifier(
-    objective='multi:softprob',
-    num_class=len(label_names),
-    n_estimators=200,
-    eval_metric='mlogloss',
-    tree_method='gpu_hist',
-    device='cuda'
-)
-# Tính sample_weight
-sample_weights = compute_sample_weight(class_weight='balanced', y=y_train)
-print("Sample weight phân bổ:", np.unique(sample_weights, return_counts=True))
+best_f1 = 0
+best_params = None
 
-grid_search = GridSearchCV(
-    estimator=xgb_clf,
-    param_grid=param_grid,
-    scoring='f1_weighted',
-    cv=3,
-    verbose=2,
-    n_jobs=-1
-)
-grid_search.fit(X_train, y_train, sample_weight=sample_weights)
+for params in param_list:
+    max_depth, learning_rate, subsample, colsample_bytree, gamma = params
+    fold_f1_scores = []
+    for train_index, val_index in kf.split(X_train, y_train):
+        X_tr, X_val_fold = X_train[train_index], X_train[val_index]
+        y_tr, y_val_fold = y_train[train_index], y_train[val_index]
+        sample_weight_fold = compute_sample_weight(class_weight='balanced', y=y_tr)
+        model = XGBClassifier(
+            objective='multi:softprob',
+            num_class=len(label_names),
+            n_estimators=200,
+            eval_metric='mlogloss',
+            tree_method='gpu_hist',
+            device='cuda',
+            max_bin=64,
+            enable_categorical=False,
+            max_depth=max_depth,
+            learning_rate=learning_rate,
+            subsample=subsample,
+            colsample_bytree=colsample_bytree,
+            gamma=gamma
+        )
+        model.fit(X_tr, y_tr, sample_weight=sample_weight_fold, verbose=False)
+        y_val_pred_fold = model.predict(X_val_fold)
+        f1 = f1_score(y_val_fold, y_val_pred_fold, average='weighted')
+        fold_f1_scores.append(f1)
+        del model
+        gc.collect()
+    mean_f1 = np.mean(fold_f1_scores)
+    print(f"Params: {params} => Mean F1: {mean_f1:.4f}")
+    if mean_f1 > best_f1:
+        best_f1 = mean_f1
+        best_params = {
+            'max_depth': max_depth,
+            'learning_rate': learning_rate,
+            'subsample': subsample,
+            'colsample_bytree': colsample_bytree,
+            'gamma': gamma
+        }
 
-# ===========================================
-# Lưu GridSearchCV object
-# ===========================================
-joblib.dump(grid_search, os.path.join(OUTPUT_DIR, f"{timestamp}_gridsearchcv.pkl"))
-print(f"Đã lưu GridSearchCV object vào: {OUTPUT_DIR}/{timestamp}_gridsearchcv.pkl")
-
-#===============================
-#Load GridSearchCV từ GGDrive
-#===============================
-# gridsearch_path = '/content/drive/MyDrive/Tai_Lieu_NCKH/AIData/xgboost/20250705_202045/20250705_202045_gridsearchcv.pkl'
-# grid_search = joblib.load(gridsearch_path)
-# print("Đã load GridSearchCV từ:", gridsearch_path)
-# print("Best hyperparameters tìm được:", grid_search.best_params_)
+print("\nBest hyperparameters tìm được:", best_params)
+print(f"Best mean F1: {best_f1:.4f}")
+gc.collect()
 
 # ===========================================
 # Train lại với early stopping
 # ===========================================
-best_params = grid_search.best_params_
-print("Best hyperparameters tìm được:", best_params)
-
 final_model = XGBClassifier(
     **best_params,
     objective='multi:softprob',
     num_class=len(label_names),
     eval_metric=['mlogloss' , 'merror'],
     tree_method='gpu_hist',
-    device='cuda'
+    device='cuda',
+    max_bin=64,
+    enable_categorical=False
 )
 
-# Dùng lại sample_weight đã tính
 final_model.fit(
     X_train, y_train,
     eval_set=[(X_val, y_val)],
-    sample_weight=sample_weights,
+    sample_weight=sample_weight_all,
     callbacks=[EarlyStopping(rounds=50)],
     verbose=True
 )
 
 # ===========================================
-# Lưu log training từng round vào Excel + vẽ biểu đồ
+# Log + biểu đồ + report
 # ===========================================
 results = final_model.evals_result()
 rounds = list(range(1, len(results['validation_0']['mlogloss']) + 1))
@@ -205,29 +215,6 @@ val_mlogloss = results['validation_0']['mlogloss']
 val_merror = results['validation_0']['merror']
 val_accuracy = [1 - e for e in val_merror]
 
-val_accuracy_per_round = []
-for n_rounds in rounds:
-    y_val_pred_round = final_model.predict(X_val, iteration_range=(0, n_rounds))
-    acc = accuracy_score(y_val, y_val_pred_round)
-    val_accuracy_per_round.append(acc)
-
-# Cập nhật DataFrame log_df
-log_df = pd.DataFrame({
-    'round': rounds,
-    'val_mlogloss': val_mlogloss,
-    'val_merror': val_merror,
-    'val_accuracy_builtin': [1 - e for e in val_merror],
-    'val_accuracy_predict': val_accuracy_per_round
-})
-
-# Lưu lại ra Excel mới
-excel_path = os.path.join(OUTPUT_DIR, f"{timestamp}_training_log_with_predict.xlsx")
-log_df.to_excel(excel_path, index=False)
-print(f"Đã lưu log quá trình training vào Excel tại: {excel_path}")
-
-# ===========================================
-# Vẽ biểu đồ Loss curve
-# ===========================================
 plt.figure(figsize=(8,5))
 plt.plot(rounds, val_mlogloss, marker='o', color='red', label='Validation mlogloss')
 plt.title("Validation Loss Curve")
@@ -238,9 +225,6 @@ plt.legend()
 plt.savefig(os.path.join(OUTPUT_DIR, f"{timestamp}_loss_curve.png"))
 plt.show()
 
-# ===========================================
-# Vẽ biểu đồ Accuracy curve
-# ===========================================
 plt.figure(figsize=(8,5))
 plt.plot(rounds, val_accuracy, marker='o', color='green', label='Validation Accuracy')
 plt.title("Validation Accuracy Curve")
@@ -251,9 +235,6 @@ plt.legend()
 plt.savefig(os.path.join(OUTPUT_DIR, f"{timestamp}_accuracy_curve.png"))
 plt.show()
 
-# ===========================================
-# Đánh giá mô hình cuối cùng
-# ===========================================
 y_val_pred = final_model.predict(X_val)
 y_test_pred = final_model.predict(X_test)
 print("Validation Report:")
@@ -268,10 +249,6 @@ plt.title("Ma trận nhầm lẫn (XGBoost + EarlyStopping)")
 plt.savefig(os.path.join(OUTPUT_DIR, f"{timestamp}_confusion_matrix_final.png"))
 plt.show()
 
-# ===========================================
-# Render classification_report thành ảnh text
-# ===========================================
-from sklearn.metrics import classification_report
 fig, ax = plt.subplots(figsize=(8, 6))
 ax.axis('off')
 report_text = classification_report(y_test, y_test_pred, target_names=label_names)
@@ -280,15 +257,9 @@ plt.title("Classification Report", fontsize=14, pad=20)
 plt.savefig(os.path.join(OUTPUT_DIR, f"{timestamp}_classification_report.png"), bbox_inches='tight')
 plt.show()
 
-# Đồng thời lưu luôn ra file txt
 with open(os.path.join(OUTPUT_DIR, f"{timestamp}_classification_report.txt"), 'w') as f:
     f.write(report_text)
-print("Đã lưu classification_report thành PNG + TXT trong thư mục output.")
 
-# ===========================================
-# Lưu model + scaler
-# ===========================================
-best_model = final_model
-joblib.dump(best_model, os.path.join(OUTPUT_DIR, f"{timestamp}_xgboost_model.pkl"))
+joblib.dump(final_model, os.path.join(OUTPUT_DIR, f"{timestamp}_xgboost_model.pkl"))
 joblib.dump(scaler, os.path.join(OUTPUT_DIR, f"{timestamp}_scaler.pkl"))
 print("Đã lưu best_model, scaler và kết quả tại:", OUTPUT_DIR)
